@@ -70,6 +70,7 @@ func NewSimulationAPI(eth Backend) *SimulationAPIBackend {
 		exitCh:      make(chan struct{}),
 	}
 	simulationAPIBackend.chainHeadSub = eth.BlockChain().SubscribeChainHeadEvent(simulationAPIBackend.chainHeadCh)
+	simulationAPIBackend.wg.Add(1)
 	go func() {
 		err := simulationAPIBackend.loop()
 		if err != nil {
