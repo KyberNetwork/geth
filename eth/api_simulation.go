@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"math"
+	"math/big"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -40,6 +41,8 @@ type InternalTxResponse struct {
 }
 
 type SimulateResponse struct {
+	PendingBlockNumber   uint64               `json:"pending_block_number"`
+	BaseFee              *big.Int             `json:"base_fee"`
 	ByteCodeContracts    map[string]string    `json:"byte_code_contracts"`
 	InternalTransactions []InternalTxResponse `json:"internal_transactions"`
 	DebugInfo            DebugInfo            `json:"debug_info"`
@@ -275,6 +278,8 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction) (*SimulateRespons
 			StartSimulateMs: startTraceTimeMs,
 			EndSimulateMs:   time.Now().UnixMilli(),
 		},
+		PendingBlockNumber: currentBlock.NumberU64() + 1,
+		BaseFee:            currentBlock.BaseFee(),
 	}, nil
 }
 
