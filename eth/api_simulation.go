@@ -29,10 +29,20 @@ type DebugInfo struct {
 	EndSimulateMs   int64 `json:"end_simulate_ms"`
 }
 
+type InternalTxResponse struct {
+	Type    string `json:"type"`
+	From    string `json:"from"`
+	To      string `json:"to"`
+	Gas     uint64 `json:"gas"`
+	GasUsed uint64 `json:"gas_used"`
+	Input   string `json:"input"`
+	Value   string `json:"value"`
+}
+
 type SimulateResponse struct {
-	ByteCodeContracts    map[string]string   `json:"byte_code_contracts"`
-	InternalTransactions []native.InternalTx `json:"internal_transactions"`
-	DebugInfo            DebugInfo           `json:"debug_info"`
+	ByteCodeContracts    map[string]string    `json:"byte_code_contracts"`
+	InternalTransactions []InternalTxResponse `json:"internal_transactions"`
+	DebugInfo            DebugInfo            `json:"debug_info"`
 }
 
 type TraceInternalTransactionArgs struct {
@@ -237,8 +247,29 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction) (*SimulateRespons
 		contractAddress := strings.ToLower(internalTx.To.String())
 		byteCodeContracts[contractAddress] = codeHex
 	}
+
+	internalTxsResponse := make([]InternalTxResponse, 0, len(internalTxTracerOutput.InternalTxs))
+	for _, internalTx := range internalTxTracerOutput.InternalTxs {
+		to := ""
+		value := "0"
+		if internalTx.To != nil {
+			to = internalTx.To.String()
+		}
+		if internalTx.Value != nil {
+			value = internalTx.Value.String()
+		}
+		internalTxsResponse = append(internalTxsResponse, InternalTxResponse{
+			Type:    internalTx.Type.String(),
+			From:    internalTx.From.String(),
+			To:      to,
+			Gas:     internalTx.Gas,
+			GasUsed: internalTx.GasUsed,
+			Input:   internalTx.Input,
+			Value:   value,
+		})
+	}
 	return &SimulateResponse{
-		InternalTransactions: internalTxTracerOutput.InternalTxs,
+		InternalTransactions: internalTxsResponse,
 		ByteCodeContracts:    byteCodeContracts,
 		DebugInfo: DebugInfo{
 			StartSimulateMs: startTraceTimeMs,
