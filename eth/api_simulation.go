@@ -182,7 +182,7 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction) (*SimulateRespons
 	var (
 		signer    = b.currentSigner
 		blockCtx  = b.currentBlockCtx
-		msg, _    = core.TransactionToMessage(tx, signer, currentBlock.BaseFee())
+		msg, _    = core.TransactionToMessageWithSkipsBaseFeeCheck(tx, signer, currentBlock.BaseFee())
 		txCtx     = core.NewEVMTxContext(msg)
 		tracerCtx = &tracers.Context{
 			BlockHash:   currentBlock.Hash(),
