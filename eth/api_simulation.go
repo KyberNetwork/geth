@@ -169,7 +169,7 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction) (*SimulateRespons
 		stateDb      = b.stateDb
 	)
 
-	if currentBlock == nil {
+	if currentBlock == nil || currentBlock.NumberU64() <= 0 {
 		return nil, fmt.Errorf("current block is empty")
 	}
 
@@ -213,6 +213,7 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction) (*SimulateRespons
 	}
 
 	if executionResult == nil {
+		log.Warn("Simulation result is empty", "tx_hash", tx.Hash().String())
 		return nil, nil
 	}
 
@@ -227,6 +228,7 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction) (*SimulateRespons
 	}
 
 	if len(tracerResultBytes) == 0 {
+		log.Warn("Tracer result is empty", "tx_hash", tx.Hash().String())
 		return nil, nil
 	}
 
