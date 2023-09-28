@@ -100,7 +100,11 @@ func (b *SimulationAPIBackend) TraceInternalTransaction(ctx context.Context, arg
 	}
 
 	if isCatchUpLatestBlock := b.isCatchUpLatestBlock.Load(); !isCatchUpLatestBlock {
-		return nil, errors.New("the state isn't up to date")
+		var blockNumber uint64
+		if b.currentBlock != nil {
+			blockNumber = b.currentBlock.NumberU64()
+		}
+		return nil, fmt.Errorf("the state isn't up to date, block_number: %d", blockNumber)
 	}
 	tx := new(types.Transaction)
 	if err := tx.UnmarshalBinary(args.Tx); err != nil {
