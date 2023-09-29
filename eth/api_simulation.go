@@ -269,8 +269,8 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction) (*SimulateRespons
 		}
 		internalTxsResponse = append(internalTxsResponse, InternalTxResponse{
 			Type:    internalTx.Type.String(),
-			From:    internalTx.From.String(),
-			To:      to,
+			From:    strings.ToLower(internalTx.From.String()),
+			To:      strings.ToLower(to),
 			Gas:     internalTx.Gas,
 			GasUsed: internalTx.GasUsed,
 			Input:   internalTx.Input,
