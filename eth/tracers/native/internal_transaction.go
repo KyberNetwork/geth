@@ -3,6 +3,7 @@ package native
 import (
 	"encoding/json"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/eth/tracers"
 	"math/big"
@@ -27,6 +28,7 @@ type InternalTxs []InternalTx
 
 type InternalTxTracerOutput struct {
 	InternalTxs InternalTxs `json:"internal_txs,omitempty"`
+	EventLogs   []types.Log `json:"event_logs"`
 }
 
 type internalTransactionTracer struct {
@@ -37,6 +39,7 @@ type internalTransactionTracer struct {
 
 	// output
 	internalTransactions InternalTxs
+	eventLogs            []types.Log
 }
 
 const InternalTransactionTracerName = "internalTransactionTracer"
@@ -121,30 +124,30 @@ func (t *internalTransactionTracer) CaptureState(pc uint64, op vm.OpCode, gas, c
 	switch op {
 	case vm.LOG0, vm.LOG1, vm.LOG2, vm.LOG3, vm.LOG4:
 		// TODO(tiennampham23): uncomment if we need the logs from the transactions
-		//size := int(op - vm.LOG0)
-		//
-		//stack := scope.Stack
-		//stackData := stack.Data()
-		//
-		//// Don't modify the stack
-		//mStart := stackData[len(stackData)-1]
-		//mSize := stackData[len(stackData)-2]
-		//topics := make([]common.Hash, size)
-		//for i := 0; i < size; i++ {
-		//	topic := stackData[len(stackData)-2-(i+1)]
-		//	topics[i] = topic.Bytes32()
-		//}
-		//
-		//data, err := tracers.GetMemoryCopyPadded(scope.Memory, int64(mStart.Uint64()), int64(mSize.Uint64()))
-		//if err != nil {
-		//	return
-		//}
-		//
-		//t.eventLogs = append(t.eventLogs, &types.Log{
-		//	Address: scope.Contract.Address(),
-		//	Topics:  topics,
-		//	Data:    data,
-		//})
+		size := int(op - vm.LOG0)
+
+		stack := scope.Stack
+		stackData := stack.Data()
+
+		// Don't modify the stack
+		mStart := stackData[len(stackData)-1]
+		mSize := stackData[len(stackData)-2]
+		topics := make([]common.Hash, size)
+		for i := 0; i < size; i++ {
+			topic := stackData[len(stackData)-2-(i+1)]
+			topics[i] = topic.Bytes32()
+		}
+
+		data, err := tracers.GetMemoryCopyPadded(scope.Memory, int64(mStart.Uint64()), int64(mSize.Uint64()))
+		if err != nil {
+			return
+		}
+
+		t.eventLogs = append(t.eventLogs, types.Log{
+			Address: scope.Contract.Address(),
+			Topics:  topics,
+			Data:    data,
+		})
 	}
 }
 func (t *internalTransactionTracer) CaptureFault(pc uint64, op vm.OpCode, gas, cost uint64, scope *vm.ScopeContext, depth int, err error) {
@@ -153,6 +156,7 @@ func (t *internalTransactionTracer) CaptureFault(pc uint64, op vm.OpCode, gas, c
 func (t *internalTransactionTracer) GetResult() (json.RawMessage, error) {
 	output := InternalTxTracerOutput{
 		InternalTxs: t.internalTransactions,
+		EventLogs:   t.eventLogs,
 	}
 	b, err := json.Marshal(output)
 	if err != nil {

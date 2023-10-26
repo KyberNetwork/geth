@@ -40,12 +40,19 @@ type InternalTxResponse struct {
 	Value   string `json:"value"`
 }
 
+type EventLogResponse struct {
+	Address string   `json:"address,omitempty"`
+	Topics  []string `json:"topics"`
+	Data    string   `json:"data"`
+}
+
 type SimulateResponse struct {
 	PendingBlockNumber   uint64               `json:"pending_block_number"`
 	BaseFee              *big.Int             `json:"base_fee"`
 	ByteCodeContracts    map[string]string    `json:"byte_code_contracts"`
 	InternalTransactions []InternalTxResponse `json:"internal_transactions"`
 	DebugInfo            DebugInfo            `json:"debug_info"`
+	Logs                 []EventLogResponse   `json:"logs"`
 }
 
 type TraceInternalTransactionArgs struct {
@@ -277,6 +284,18 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction) (*SimulateRespons
 			Value:   value,
 		})
 	}
+	logs := make([]EventLogResponse, 0, len(internalTxTracerOutput.EventLogs))
+	for _, eventLog := range internalTxTracerOutput.EventLogs {
+		topics := make([]string, 0, len(eventLog.Topics))
+		for _, topic := range eventLog.Topics {
+			topics = append(topics, topic.Hex())
+		}
+		logs = append(logs, EventLogResponse{
+			Address: strings.ToLower(eventLog.Address.String()),
+			Topics:  topics,
+			Data:    hexutil.Encode(eventLog.Data),
+		})
+	}
 	return &SimulateResponse{
 		InternalTransactions: internalTxsResponse,
 		ByteCodeContracts:    byteCodeContracts,
@@ -286,6 +305,7 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction) (*SimulateRespons
 		},
 		PendingBlockNumber: currentBlock.NumberU64() + 1,
 		BaseFee:            currentBlock.BaseFee(),
+		Logs:               logs,
 	}, nil
 }
 
