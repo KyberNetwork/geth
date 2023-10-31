@@ -7,13 +7,11 @@ import (
 	"fmt"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"math"
-	"math/big"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -24,30 +22,6 @@ import (
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 )
-
-type DebugInfo struct {
-	StartSimulateMs int64 `json:"start_simulate_ms"`
-	EndSimulateMs   int64 `json:"end_simulate_ms"`
-}
-
-type InternalTxResponse struct {
-	Type    string `json:"type"`
-	From    string `json:"from"`
-	To      string `json:"to"`
-	Gas     uint64 `json:"gas"`
-	GasUsed uint64 `json:"gas_used"`
-	Input   string `json:"input"`
-	Value   string `json:"value"`
-}
-
-type SimulateResponse struct {
-	PendingBlockNumber   uint64               `json:"pending_block_number"`
-	BaseFee              *big.Int             `json:"base_fee"`
-	ByteCodeContracts    map[string]string    `json:"byte_code_contracts"`
-	InternalTransactions []InternalTxResponse `json:"internal_transactions"`
-	DebugInfo            DebugInfo            `json:"debug_info"`
-	Logs                 []types.Log          `json:"logs"`
-}
 
 type TraceInternalTransactionArgs struct {
 	Tx hexutil.Bytes `json:"tx"`
@@ -95,7 +69,7 @@ func NewSimulationAPI(eth Backend) *SimulationAPIBackend {
 	return simulationAPIBackend
 }
 
-func (b *SimulationAPIBackend) TraceInternalTransaction(ctx context.Context, args TraceInternalTransactionArgs) (*SimulateResponse, error) {
+func (b *SimulationAPIBackend) TraceInternalTransaction(ctx context.Context, args TraceInternalTransactionArgs) (*types.SimulationTxResponse, error) {
 	if len(args.Tx) == 0 {
 		return nil, errors.New("missing transaction")
 	}
@@ -163,7 +137,7 @@ func (b *SimulationAPIBackend) loop() error {
 	}
 }
 
-func (b *SimulationAPIBackend) simulate(tx *types.Transaction) (*SimulateResponse, error) {
+func (b *SimulationAPIBackend) simulate(tx *types.Transaction) (*types.SimulationTxResponse, error) {
 	if tx.To() == nil {
 		return nil, nil
 	}
@@ -244,21 +218,7 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction) (*SimulateRespons
 		return nil, err
 	}
 
-	byteCodeContracts := make(map[string]string, len(internalTxTracerOutput.InternalTxs))
-	for _, internalTx := range internalTxTracerOutput.InternalTxs {
-		if internalTx.To == nil {
-			continue
-		}
-		code := copyStateDB.GetCode(*internalTx.To)
-		if len(code) == 0 {
-			continue
-		}
-		codeHex := fmt.Sprintf("0x%s", common.Bytes2Hex(code))
-		contractAddress := strings.ToLower(internalTx.To.String())
-		byteCodeContracts[contractAddress] = codeHex
-	}
-
-	internalTxsResponse := make([]InternalTxResponse, 0, len(internalTxTracerOutput.InternalTxs))
+	internalTxsResponse := make([]types.InternalTxResponse, 0, len(internalTxTracerOutput.InternalTxs))
 	for _, internalTx := range internalTxTracerOutput.InternalTxs {
 		to := ""
 		value := "0"
@@ -268,7 +228,7 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction) (*SimulateRespons
 		if internalTx.Value != nil {
 			value = internalTx.Value.String()
 		}
-		internalTxsResponse = append(internalTxsResponse, InternalTxResponse{
+		internalTxsResponse = append(internalTxsResponse, types.InternalTxResponse{
 			Type:    internalTx.Type.String(),
 			From:    strings.ToLower(internalTx.From.String()),
 			To:      strings.ToLower(to),
@@ -278,16 +238,27 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction) (*SimulateRespons
 			Value:   value,
 		})
 	}
-	return &SimulateResponse{
-		InternalTransactions: internalTxsResponse,
-		ByteCodeContracts:    byteCodeContracts,
-		DebugInfo: DebugInfo{
+	eventLogs := make([]types.EventLogResponse, 0, len(internalTxTracerOutput.EventLogs))
+	for _, eventLog := range internalTxTracerOutput.EventLogs {
+		topics := make([]string, 0, len(eventLog.Topics))
+		for _, topic := range eventLog.Topics {
+			topics = append(topics, topic.Hex())
+		}
+		eventLogs = append(eventLogs, types.EventLogResponse{
+			Data:    hexutil.Encode(eventLog.Data),
+			Address: eventLog.Address.String(),
+			Topics:  topics,
+		})
+	}
+	return &types.SimulationTxResponse{
+		InternalTxs: internalTxsResponse,
+		DebugInfo: types.SimulationDebugInfoResponse{
 			StartSimulateMs: startTraceTimeMs,
 			EndSimulateMs:   time.Now().UnixMilli(),
 		},
 		PendingBlockNumber: currentBlock.NumberU64() + 1,
 		BaseFee:            currentBlock.BaseFee(),
-		Logs:               internalTxTracerOutput.EventLogs,
+		Logs:               eventLogs,
 	}, nil
 }
 
