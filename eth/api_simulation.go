@@ -27,6 +27,10 @@ type TraceInternalTransactionArgs struct {
 	Tx hexutil.Bytes `json:"tx"`
 }
 
+type TransactionInternalTransactionsByBundleArgs struct {
+	Txs []hexutil.Bytes `json:"txs"`
+}
+
 type Backend interface {
 	BlockChain() *core.BlockChain
 	TxPool() *txpool.TxPool
@@ -86,12 +90,53 @@ func (b *SimulationAPIBackend) TraceInternalTransaction(ctx context.Context, arg
 		return nil, err
 	}
 
-	simulationResponse, err := b.simulate(tx)
+	var (
+		currentBlock = b.currentBlock
+		stateDb      = b.stateDb
+	)
+
+	simulationResponse, err := b.simulate(tx, stateDb.Copy(), currentBlock)
 	if err != nil {
 		return nil, err
 	}
 
 	return simulationResponse, nil
+}
+
+func (b *SimulationAPIBackend) TraceInternalTransactionsByBundle(ctx context.Context, args TransactionInternalTransactionsByBundleArgs) ([]*types.SimulationTxResponse, error) {
+	if len(args.Txs) == 0 {
+		return nil, errors.New("missing transaction")
+	}
+
+	if isCatchUpLatestBlock := b.isCatchUpLatestBlock.Load(); !isCatchUpLatestBlock {
+		var blockNumber uint64
+		if b.currentBlock != nil {
+			blockNumber = b.currentBlock.NumberU64()
+		}
+		return nil, fmt.Errorf("the state isn't up to date, block_number: %d", blockNumber)
+	}
+
+	var (
+		currentBlock             = b.currentBlock
+		stateDb                  = b.stateDb
+		simulationBundleResponse = make([]*types.SimulationTxResponse, 0)
+	)
+
+	for _, binaryTx := range args.Txs {
+		tx := new(types.Transaction)
+		if err := tx.UnmarshalBinary(binaryTx); err != nil {
+			return nil, err
+		}
+
+		simulationResponse, err := b.simulate(tx, stateDb.Copy(), currentBlock)
+		if err != nil {
+			return nil, err
+		}
+
+		simulationBundleResponse = append(simulationBundleResponse, simulationResponse)
+	}
+
+	return simulationBundleResponse, nil
 }
 
 func (b *SimulationAPIBackend) Stop() {
@@ -137,16 +182,15 @@ func (b *SimulationAPIBackend) loop() error {
 	}
 }
 
-func (b *SimulationAPIBackend) simulate(tx *types.Transaction) (*types.SimulationTxResponse, error) {
+// simulate the single transaction into *types.SimulationTxResponse
+// use stateDb as a param, stateDb isn't safe for concurrently
+// need to make the copy version of stateDb and pass as the param
+func (b *SimulationAPIBackend) simulate(tx *types.Transaction, stateDb *state.StateDB, currentBlock *types.Block) (*types.SimulationTxResponse, error) {
 	if tx.To() == nil {
 		return nil, nil
 	}
 
 	startTraceTimeMs := time.Now().UnixMilli()
-	var (
-		currentBlock = b.currentBlock
-		stateDb      = b.stateDb
-	)
 
 	if currentBlock == nil || currentBlock.NumberU64() <= 0 {
 		return nil, fmt.Errorf("current block is empty")
@@ -175,10 +219,8 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction) (*types.Simulatio
 		log.Error("Failed to create call tracer", "error", err)
 		return nil, err
 	}
-	// need to copy the new statedb, because StateDB struct isn't safe for concurrency.
-	copyStateDB := stateDb.Copy()
 
-	vmEVM := vm.NewEVM(blockCtx, txCtx, copyStateDB, chainConfig, vm.Config{
+	vmEVM := vm.NewEVM(blockCtx, txCtx, stateDb, chainConfig, vm.Config{
 		Tracer: internalTransactionTracer,
 	})
 
