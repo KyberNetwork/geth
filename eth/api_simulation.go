@@ -226,7 +226,7 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction, stateDb *state.St
 
 	executionResult, err := core.ApplyMessage(vmEVM, msg, new(core.GasPool).AddGas(math.MaxUint64))
 	if err != nil {
-		if errors.Is(err, core.ErrNonceTooLow) || errors.Is(err, core.ErrNonceTooHigh) {
+		if errors.Is(err, core.ErrNonceTooLow) || errors.Is(err, core.ErrNonceMax) {
 			return nil, nil
 		}
 		log.Error("Failed to apply the message", "hash", tx.Hash().String(), "number", currentBlock.NumberU64(), "err", err)
