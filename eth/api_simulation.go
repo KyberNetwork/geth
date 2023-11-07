@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"github.com/ethereum/go-ethereum/common"
 	"math"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,7 +19,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/eth/tracers"
-	"github.com/ethereum/go-ethereum/eth/tracers/native"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 )
@@ -44,6 +42,20 @@ func (l *list) findSnapshotByNonce(nonce uint64) *state.StateDB {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.snapshots[nonce]
+}
+
+const (
+	enableCheckpointFlag = false
+)
+
+var (
+	tracerCfgBytes []byte
+)
+
+func init() {
+	tracerCfgBytes, _ = json.Marshal(map[string]interface{}{
+		"withLog": true,
+	})
 }
 
 // SimulationAPIBackend creates a new simulation API
@@ -195,18 +207,20 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction, stateDb *state.St
 	)
 	// load the checkpoint db if exists
 	var currentList *list
-	if enc, found := b.stateDbCheckpoint.Load(msg.From.Hex()); found && enc != nil {
-		list, ok := enc.(*list)
-		if ok && list != nil {
-			currentList = list
-			checkpointStateDb := list.findSnapshotByNonce(msg.Nonce)
-			if checkpointStateDb != nil {
-				stateDb = checkpointStateDb.Copy()
+	if enableCheckpointFlag {
+		if enc, found := b.stateDbCheckpoint.Load(msg.From.Hex()); found && enc != nil {
+			list, ok := enc.(*list)
+			if ok && list != nil {
+				currentList = list
+				checkpointStateDb := list.findSnapshotByNonce(msg.Nonce)
+				if checkpointStateDb != nil {
+					stateDb = checkpointStateDb.Copy()
+				}
 			}
 		}
 	}
 
-	internalTransactionTracer, err := tracers.DefaultDirectory.New(native.InternalTransactionTracerName, tracerCtx, json.RawMessage{})
+	internalTransactionTracer, err := tracers.DefaultDirectory.New("callTracer", tracerCtx, tracerCfgBytes)
 	if err != nil {
 		log.Error("Failed to create call tracer", "error", err)
 		return nil, err
@@ -224,7 +238,10 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction, stateDb *state.St
 		log.Error("Failed to apply the message", "hash", tx.Hash().String(), "number", currentBlock.NumberU64(), "err", err)
 		return nil, err
 	}
-	b.storeSnapshot(stateDb, currentList, msg.Nonce, msg.From)
+
+	if enableCheckpointFlag {
+		b.storeSnapshot(stateDb, currentList, msg.Nonce, msg.From)
+	}
 
 	if executionResult == nil {
 		log.Warn("Simulation result is empty", "tx_hash", tx.Hash().String())
@@ -246,54 +263,14 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction, stateDb *state.St
 		return nil, nil
 	}
 
-	var internalTxTracerOutput native.InternalTxTracerOutput
-
-	if err := json.Unmarshal(tracerResultBytes, &internalTxTracerOutput); err != nil {
-		log.Error("Failed to unmarshal the internal transactions tracers", "err", err)
-		return nil, err
-	}
-
-	internalTxsResponse := make([]types.InternalTxResponse, 0, len(internalTxTracerOutput.InternalTxs))
-	for _, internalTx := range internalTxTracerOutput.InternalTxs {
-		to := ""
-		value := "0"
-		if internalTx.To != nil {
-			to = internalTx.To.String()
-		}
-		if internalTx.Value != nil {
-			value = internalTx.Value.String()
-		}
-		internalTxsResponse = append(internalTxsResponse, types.InternalTxResponse{
-			Type:    internalTx.Type.String(),
-			From:    strings.ToLower(internalTx.From.String()),
-			To:      strings.ToLower(to),
-			Gas:     internalTx.Gas,
-			GasUsed: internalTx.GasUsed,
-			Input:   internalTx.Input,
-			Value:   value,
-		})
-	}
-	eventLogs := make([]types.EventLogResponse, 0, len(internalTxTracerOutput.EventLogs))
-	for _, eventLog := range internalTxTracerOutput.EventLogs {
-		topics := make([]string, 0, len(eventLog.Topics))
-		for _, topic := range eventLog.Topics {
-			topics = append(topics, topic.Hex())
-		}
-		eventLogs = append(eventLogs, types.EventLogResponse{
-			Data:    hexutil.Encode(eventLog.Data),
-			Address: eventLog.Address.String(),
-			Topics:  topics,
-		})
-	}
 	return &types.SimulationTxResponse{
-		InternalTxs: internalTxsResponse,
+		CallFrame: tracerResultBytes,
 		DebugInfo: types.SimulationDebugInfoResponse{
 			StartSimulateMs: startTraceTimeMs,
 			EndSimulateMs:   time.Now().UnixMilli(),
 		},
 		PendingBlockNumber: currentBlock.NumberU64() + 1,
 		BaseFee:            currentBlock.BaseFee(),
-		Logs:               eventLogs,
 	}, nil
 }
 
