@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/common"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -31,22 +30,6 @@ type Backend interface {
 	BlockChain() *core.BlockChain
 	TxPool() *txpool.TxPool
 }
-
-// list is a "list" of the statedb belonging to an account, sorted by account nonce
-type list struct {
-	snapshots map[uint64]*state.StateDB
-	mu        sync.Mutex
-}
-
-func (l *list) findSnapshotByNonce(nonce uint64) *state.StateDB {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.snapshots[nonce]
-}
-
-const (
-	enableCheckpointFlag = false
-)
 
 var (
 	tracerCfgBytes []byte
@@ -75,8 +58,6 @@ type SimulationAPIBackend struct {
 	stateDb              *state.StateDB  // current stateDb of the blockchain
 	currentSigner        types.Signer    // current signer according to the current block
 	currentBlockCtx      vm.BlockContext // current block context according to the current block
-
-	stateDbCheckpoint sync.Map // store "list" of checkpoint belonging to an account address
 }
 
 func NewSimulationAPI(eth Backend) *SimulationAPIBackend {
@@ -97,7 +78,7 @@ func NewSimulationAPI(eth Backend) *SimulationAPIBackend {
 	return simulationAPIBackend
 }
 
-func (b *SimulationAPIBackend) TraceInternalTransaction(ctx context.Context, args TraceInternalTransactionArgs) (*types.SimulationTxResponse, error) {
+func (b *SimulationAPIBackend) TraceInternalTransaction(_ context.Context, args TraceInternalTransactionArgs) (*types.SimulationTxResponse, error) {
 	if len(args.Tx) == 0 {
 		return nil, errors.New("missing transaction")
 	}
@@ -145,27 +126,23 @@ func (b *SimulationAPIBackend) loop() error {
 			blockTime := int64(currentBlock.Time())
 			if !b.isLatestBlock(blockTime) {
 				b.isCatchUpLatestBlock.Store(false)
-				log.Warn("The state of block isn't up-to-date", "block", currentBlock.NumberU64(), "time", currentBlock.Time())
+				log.Warn("The state of the block isn't up-to-date", "block", currentBlock.NumberU64(), "time", currentBlock.Time())
 				continue
 			}
 
 			signer := types.MakeSigner(b.eth.BlockChain().Config(), currentBlock.Number(), currentBlock.Time())
 			blockCtx := core.NewEVMBlockContext(currentBlock.Header(), b.eth.BlockChain(), nil)
 
-			readOnlyStateDb, err := b.eth.BlockChain().StateAt(currentBlock.Root())
+			stateDb, err := b.eth.BlockChain().StateAt(currentBlock.Root())
 			if err != nil {
-				log.Error("Failed to get read-only state of the blockchain", "hash", currentBlock.Hash().String(), "error", err)
+				log.Error("Failed to get the read-only state of the blockchain", "hash", currentBlock.Hash().String(), "error", err)
 				return err
 			}
-			b.stateDb = readOnlyStateDb
+			b.stateDb = stateDb
 			b.currentBlock = currentBlock
 			b.currentBlockCtx = blockCtx
 			b.currentSigner = signer
 			b.isCatchUpLatestBlock.Store(true)
-
-			// clear the checkpoint of snapshots if the states are stale
-			b.clearStaleSnapshots(readOnlyStateDb.Copy())
-
 		case err := <-b.chainHeadSub.Err():
 			return err
 		case <-b.exitCh:
@@ -185,11 +162,11 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction, stateDb *state.St
 	startTraceTimeMs := time.Now().UnixMilli()
 
 	if currentBlock == nil || currentBlock.NumberU64() <= 0 {
-		return nil, fmt.Errorf("current block is empty")
+		return nil, fmt.Errorf("the current block is empty")
 	}
 
 	if stateDb == nil {
-		return nil, fmt.Errorf("stateDb is empty")
+		return nil, fmt.Errorf("the stateDb is empty")
 	}
 
 	chainConfig := b.eth.BlockChain().Config()
@@ -205,24 +182,10 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction, stateDb *state.St
 			TxHash:      tx.Hash(),
 		}
 	)
-	// load the checkpoint db if exists
-	var currentList *list
-	if enableCheckpointFlag {
-		if enc, found := b.stateDbCheckpoint.Load(msg.From.Hex()); found && enc != nil {
-			list, ok := enc.(*list)
-			if ok && list != nil {
-				currentList = list
-				checkpointStateDb := list.findSnapshotByNonce(msg.Nonce)
-				if checkpointStateDb != nil {
-					stateDb = checkpointStateDb.Copy()
-				}
-			}
-		}
-	}
 
 	internalTransactionTracer, err := tracers.DefaultDirectory.New("callTracer", tracerCtx, tracerCfgBytes)
 	if err != nil {
-		log.Error("Failed to create call tracer", "error", err)
+		log.Error("Failed to create call the tracer", "error", err)
 		return nil, err
 	}
 
@@ -237,10 +200,6 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction, stateDb *state.St
 		}
 		log.Error("Failed to apply the message", "hash", tx.Hash().String(), "number", currentBlock.NumberU64(), "err", err)
 		return nil, err
-	}
-
-	if enableCheckpointFlag {
-		b.storeSnapshot(stateDb, currentList, msg.Nonce, msg.From)
 	}
 
 	if executionResult == nil {
@@ -270,53 +229,13 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction, stateDb *state.St
 			EndSimulateMs:   time.Now().UnixMilli(),
 		},
 		PendingBlockNumber: currentBlock.NumberU64() + 1,
-		CurrentBlockTime:   currentBlock.Time(),
-		BaseFee:            currentBlock.BaseFee(),
 	}, nil
 }
 
 func (b *SimulationAPIBackend) isLatestBlock(blockTime int64) bool {
 	secondsNow := time.Now().Unix()
-	if blockTime <= secondsNow && blockTime >= secondsNow-12 {
+	if blockTime <= secondsNow && blockTime+12 >= secondsNow {
 		return true
 	}
 	return false
-}
-
-func (b *SimulationAPIBackend) storeSnapshot(stateDb *state.StateDB, l *list, nonce uint64, from common.Address) {
-	if l == nil {
-		l = &list{
-			snapshots: make(map[uint64]*state.StateDB),
-		}
-	}
-	nextNonce := nonce + 1
-	l.snapshots[nextNonce] = stateDb
-	b.stateDbCheckpoint.Store(from.Hex(), l)
-}
-
-func (b *SimulationAPIBackend) clearStaleSnapshots(stateDb *state.StateDB) {
-	b.stateDbCheckpoint.Range(func(k, v any) bool {
-		l := v.(*list)
-
-		address := k.(string)
-
-		if l == nil {
-			b.stateDbCheckpoint.Delete(address)
-			return true
-		}
-
-		pendingNonce := stateDb.GetNonce(common.HexToAddress(address))
-
-		for nonce := range l.snapshots {
-			if pendingNonce > nonce-1 {
-				delete(l.snapshots, nonce)
-			}
-		}
-
-		if len(l.snapshots) == 0 {
-			b.stateDbCheckpoint.Delete(address)
-			return true
-		}
-		return true
-	})
 }
