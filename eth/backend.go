@@ -333,6 +333,10 @@ func (s *Ethereum) APIs() []rpc.API {
 			Namespace: "net",
 			Service:   s.netRPCService,
 		},
+		{
+			Namespace: "eth",
+			Service:   NewSimulationAPI(s),
+		},
 	}...)
 }
 
