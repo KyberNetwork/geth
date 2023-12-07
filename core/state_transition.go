@@ -144,9 +144,6 @@ type Message struct {
 	// account nonce in state. It also disables checking that the sender is an EOA.
 	// This field will be set to true for operations like RPC eth_call.
 	SkipAccountChecks bool
-
-	// When SkipBaseFeeChecks is true, the message isn't checked with BaseFee and msg.GasFeeCap
-	SkipBaseFeeChecks bool
 }
 
 // TransactionToMessage converts a transaction into a Message.
@@ -172,20 +169,6 @@ func TransactionToMessage(tx *types.Transaction, s types.Signer, baseFee *big.In
 	var err error
 	msg.From, err = types.Sender(s, tx)
 	return msg, err
-}
-
-// TransactionToMessageWithSkipsBaseFeeCheck converts a transaction into a Message.
-//
-// Skip to check BaseFee with GasFeeCap to prevent the error ErrFeeCapTooLow
-func TransactionToMessageWithSkipsBaseFeeCheck(tx *types.Transaction, s types.Signer, baseFee *big.Int) (*Message, error) {
-	msg, err := TransactionToMessage(tx, s, baseFee)
-	if err != nil {
-		return nil, err
-	}
-
-	// Set SkipBaseFeeChecks is true
-	msg.SkipBaseFeeChecks = true
-	return msg, nil
 }
 
 // ApplyMessage computes the new state by applying the given message
@@ -324,8 +307,8 @@ func (st *StateTransition) preCheck() error {
 			}
 			// This will panic if baseFee is nil, but basefee presence is verified
 			// as part of header validation.
-			if msg.GasFeeCap.Cmp(st.evm.Context.BaseFee) < 0 && !msg.SkipBaseFeeChecks {
-				return fmt.Errorf("%w: address %v, maxFeePerGas: %s baseFee: %s", ErrFeeCapTooLow,
+			if msg.GasFeeCap.Cmp(st.evm.Context.BaseFee) < 0 {
+				return fmt.Errorf("%w: address %v, maxFeePerGas: %s, baseFee: %s", ErrFeeCapTooLow,
 					msg.From.Hex(), msg.GasFeeCap, st.evm.Context.BaseFee)
 			}
 		}
