@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -174,7 +175,8 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction, stateDb *state.St
 	var (
 		signer    = b.currentSigner
 		blockCtx  = b.currentBlockCtx
-		msg, _    = core.TransactionToMessageWithSkipsBaseFeeCheck(tx, signer, currentBlock.BaseFee())
+		baseFee   = eip1559.CalcBaseFee(chainConfig, currentBlock.Header())
+		msg, _    = core.TransactionToMessage(tx, signer, baseFee)
 		txCtx     = core.NewEVMTxContext(msg)
 		tracerCtx = &tracers.Context{
 			BlockHash:   currentBlock.Hash(),
