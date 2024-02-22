@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,6 +28,10 @@ import (
 	"github.com/ethereum/go-ethereum/eth/tracers"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
+)
+
+var (
+	enableDevnet = os.Getenv("ENABLE_DEVNET")
 )
 
 type TraceInternalTransactionArgs struct {
@@ -172,9 +177,9 @@ func (b *SimulationAPIBackend) loop() error {
 
 func (b *SimulationAPIBackend) setBlock(currentBlock *types.Block) error {
 	log.Info("Receive new head", "block", currentBlock.NumberU64())
-
+	isEnableDevNet := enableDevnet == "true"
 	blockTime := int64(currentBlock.Time())
-	if !b.isLatestBlock(blockTime) {
+	if !b.isLatestBlock(blockTime) && !isEnableDevNet {
 		b.isCatchUpLatestBlock.Store(false)
 		log.Warn("The state of the block isn't up-to-date", "block", currentBlock.NumberU64(), "time", currentBlock.Time())
 		return nil
@@ -293,6 +298,22 @@ func (b *SimulationAPIBackend) isLatestBlock(blockTime int64) bool {
 // The sender is responsible for signing the transactions and using the correct
 // nonce and ensuring validity
 func (b *SimulationAPIBackend) CallBundle(ctx context.Context, args CallBundleArgs) (map[string]interface{}, error) {
+	if b.currentBlock == nil {
+		return nil, fmt.Errorf("the current block is empty")
+	}
+
+	if b.stateDb == nil {
+		return nil, fmt.Errorf("stateDb is empty")
+	}
+
+	if isCatchUpLatestBlock := b.isCatchUpLatestBlock.Load(); !isCatchUpLatestBlock {
+		var blockNumber uint64
+		if b.currentBlock != nil {
+			blockNumber = b.currentBlock.NumberU64()
+		}
+		return nil, fmt.Errorf("failed to simulate the bundle because of the state isn't up to date, block_number: %d", blockNumber)
+	}
+
 	if len(args.Txs) == 0 {
 		return nil, errors.New("bundle missing txs")
 	}
