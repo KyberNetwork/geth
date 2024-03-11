@@ -495,6 +495,9 @@ func (s *Ethereum) SyncMode() downloader.SyncMode {
 	mode, _ := s.handler.chainSync.modeAndLocalHead()
 	return mode
 }
+func (s *Ethereum) Config() *ethconfig.Config {
+	return s.config
+}
 
 // Protocols returns all the currently configured
 // network protocols to start.

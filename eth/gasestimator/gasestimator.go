@@ -42,8 +42,10 @@ type Options struct {
 	Chain  core.ChainContext   // Chain context to access past block hashes
 	Header *types.Header       // Header defining the block context to execute in
 	State  *state.StateDB      // Pre-state on top of which to estimate the gas
-
-	ErrorRatio float64 // Allowed overestimation ratio for faster estimation termination
+	// This flag whether determines we should make the copy of the opts.State or not.
+	// In the case of bundling transactions, we don't need to make a new copy of opts.State
+	IsNotCopyStateDB bool
+	ErrorRatio       float64 // Allowed overestimation ratio for faster estimation termination
 }
 
 // Estimate returns the lowest possible gas limit that allows the transaction to
@@ -206,13 +208,19 @@ func execute(ctx context.Context, call *core.Message, opts *Options, gasLimit ui
 // call invocation.
 func run(ctx context.Context, call *core.Message, opts *Options) (*core.ExecutionResult, error) {
 	// Assemble the call and the call context
+	var dirtyState *state.StateDB
+	if opts.IsNotCopyStateDB {
+		dirtyState = opts.State
+	} else {
+		dirtyState = opts.State.Copy()
+	}
 	var (
 		msgContext = core.NewEVMTxContext(call)
 		evmContext = core.NewEVMBlockContext(opts.Header, opts.Chain, nil)
 
-		dirtyState = opts.State.Copy()
-		evm        = vm.NewEVM(evmContext, msgContext, dirtyState, opts.Config, vm.Config{NoBaseFee: true})
+		evm = vm.NewEVM(evmContext, msgContext, dirtyState, opts.Config, vm.Config{NoBaseFee: true})
 	)
+
 	// Monitor the outer context and interrupt the EVM upon cancellation. To avoid
 	// a dangling goroutine until the outer estimation finishes, create an internal
 	// context for the lifetime of this method call.
