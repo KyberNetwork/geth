@@ -13,6 +13,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/eth/ethconfig"
+	"github.com/ethereum/go-ethereum/eth/gasestimator"
+	"github.com/ethereum/go-ethereum/internal/ethapi"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -29,6 +34,8 @@ import (
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 )
+
+const estimateGasErrorRatio = 0.015
 
 var (
 	enableDevnet = os.Getenv("ENABLE_DEVNET")
@@ -51,9 +58,34 @@ type CallBundleArgs struct {
 	BaseFee                *big.Int              `json:"baseFee"`
 }
 
+type EstimateGasBundleArgs struct {
+	Transactions []ethapi.TransactionArgs `json:"transactions"`
+}
+
+type revertError struct {
+	error
+	reason string // revert reason hex encoded
+}
+
+// This function is copied from
+// https://github.com/KyberNetwork/geth/blob/6b0de79935110fb5f63a60288191848dd98980ea/internal/ethapi/errors.go#L46
+func newRevertError(revert []byte) *revertError {
+	err := vm.ErrExecutionReverted
+
+	reason, errUnpack := abi.UnpackRevert(revert)
+	if errUnpack == nil {
+		err = fmt.Errorf("%w: %v", vm.ErrExecutionReverted, reason)
+	}
+	return &revertError{
+		error:  err,
+		reason: hexutil.Encode(revert),
+	}
+}
+
 type Backend interface {
 	BlockChain() *core.BlockChain
 	TxPool() *txpool.TxPool
+	Config() *ethconfig.Config
 }
 
 var (
@@ -473,4 +505,57 @@ func (b *SimulationAPIBackend) CallBundle(ctx context.Context, args CallBundleAr
 
 	ret["bundleHash"] = "0x" + common.Bytes2Hex(bundleHash.Sum(nil))
 	return ret, nil
+}
+
+func (b *SimulationAPIBackend) EstimateGasBundle(ctx context.Context, args EstimateGasBundleArgs, overrides *ethapi.StateOverride) ([]uint64, error) {
+	txs := args.Transactions
+
+	if b.stateDb == nil {
+		return nil, fmt.Errorf("statedb is empty")
+	}
+
+	if b.currentBlock == nil {
+		return nil, fmt.Errorf("current block is empty")
+	}
+
+	var (
+		stateDB     = b.stateDb.Copy()
+		parent      = b.currentBlock.Header()
+		chainConfig = b.eth.BlockChain().Config()
+		gasCap      = b.eth.Config().RPCGasCap
+
+		opts = &gasestimator.Options{
+			Config:           chainConfig,
+			Chain:            b.eth.BlockChain(),
+			Header:           parent,
+			State:            stateDB,
+			IsNotCopyStateDB: true,
+			ErrorRatio:       estimateGasErrorRatio,
+		}
+	)
+	if err := overrides.Apply(stateDB); err != nil {
+		log.Error("Failed to apply overrides to state db", "err", err)
+		return nil, err
+	}
+
+	var gasEstimatedBundles []uint64
+
+	for _, tx := range txs {
+		// Run the gas estimation andwrap any revertals into a custom return
+		call, err := tx.ToMessage(gasCap, parent.BaseFee)
+		if err != nil {
+			return nil, err
+		}
+		estimate, revert, err := gasestimator.Estimate(ctx, call, opts, gasCap)
+		if err != nil {
+			if len(revert) > 0 {
+				return nil, newRevertError(revert)
+			}
+			return nil, err
+		}
+
+		gasEstimatedBundles = append(gasEstimatedBundles, estimate)
+	}
+
+	return gasEstimatedBundles, nil
 }
