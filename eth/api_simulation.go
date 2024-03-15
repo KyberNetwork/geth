@@ -15,7 +15,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
-	"github.com/ethereum/go-ethereum/eth/gasestimator"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -505,57 +504,4 @@ func (b *SimulationAPIBackend) CallBundle(ctx context.Context, args CallBundleAr
 
 	ret["bundleHash"] = "0x" + common.Bytes2Hex(bundleHash.Sum(nil))
 	return ret, nil
-}
-
-func (b *SimulationAPIBackend) EstimateGasBundle(ctx context.Context, args EstimateGasBundleArgs, overrides *ethapi.StateOverride) ([]uint64, error) {
-	txs := args.Transactions
-
-	if b.stateDb == nil {
-		return nil, fmt.Errorf("statedb is empty")
-	}
-
-	if b.currentBlock == nil {
-		return nil, fmt.Errorf("current block is empty")
-	}
-
-	var (
-		stateDB     = b.stateDb.Copy()
-		parent      = b.currentBlock.Header()
-		chainConfig = b.eth.BlockChain().Config()
-		gasCap      = b.eth.Config().RPCGasCap
-
-		opts = &gasestimator.Options{
-			Config:           chainConfig,
-			Chain:            b.eth.BlockChain(),
-			Header:           parent,
-			State:            stateDB,
-			IsNotCopyStateDB: true,
-			ErrorRatio:       estimateGasErrorRatio,
-		}
-	)
-	if err := overrides.Apply(stateDB); err != nil {
-		log.Error("Failed to apply overrides to state db", "err", err)
-		return nil, err
-	}
-
-	var gasEstimatedBundles []uint64
-
-	for _, tx := range txs {
-		// Run the gas estimation andwrap any revertals into a custom return
-		call, err := tx.ToMessage(gasCap, parent.BaseFee)
-		if err != nil {
-			return nil, err
-		}
-		estimate, revert, err := gasestimator.Estimate(ctx, call, opts, gasCap)
-		if err != nil {
-			if len(revert) > 0 {
-				return nil, newRevertError(revert)
-			}
-			return nil, err
-		}
-
-		gasEstimatedBundles = append(gasEstimatedBundles, estimate)
-	}
-
-	return gasEstimatedBundles, nil
 }

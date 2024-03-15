@@ -541,6 +541,11 @@ web3._extend({
 			outputFormatter: web3._extend.utils.toDecimal
 		}),
 		new web3._extend.Method({
+			name: 'estimateGasBundle',
+			call: 'eth_estimateGasBundle',
+			params: 3,
+		}),
+		new web3._extend.Method({
 			name: 'submitTransaction',
 			call: 'eth_submitTransaction',
 			params: 1,
