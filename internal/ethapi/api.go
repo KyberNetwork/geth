@@ -1196,6 +1196,45 @@ func DoEstimateGas(ctx context.Context, b Backend, args TransactionArgs, blockNr
 	return hexutil.Uint64(estimate), nil
 }
 
+func DoEstimateGasBundle(ctx context.Context, b Backend, bundle EstimateGasBundleArgs, blockNrOrHash rpc.BlockNumberOrHash, overrides *StateOverride, gasCap uint64) ([]hexutil.Uint64, error) {
+	// Retrieve the base state and mutate it with any overrides
+	stateDB, header, err := b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHash)
+	if stateDB == nil || err != nil {
+		return nil, err
+	}
+	if err = overrides.Apply(stateDB); err != nil {
+		return nil, err
+	}
+	// Construct the gas estimator option from the user input
+	opts := &gasestimator.Options{
+		Config:           b.ChainConfig(),
+		Chain:            NewChainContext(ctx, b),
+		Header:           header,
+		State:            stateDB,
+		IsNotCopyStateDB: true,
+		ErrorRatio:       estimateGasErrorRatio,
+	}
+
+	estimateGas := make([]hexutil.Uint64, 0, len(bundle.Transactions))
+	for _, args := range bundle.Transactions {
+		// Run the gas estimation andwrap any revertals into a custom return
+		call, err := args.ToMessage(gasCap, header.BaseFee)
+		if err != nil {
+			return nil, err
+		}
+		estimate, revert, err := gasestimator.Estimate(ctx, call, opts, gasCap)
+		if err != nil {
+			if len(revert) > 0 {
+				return nil, newRevertError(revert)
+			}
+			return nil, err
+		}
+		estimateGas = append(estimateGas, hexutil.Uint64(estimate))
+	}
+	return estimateGas, nil
+
+}
+
 // EstimateGas returns the lowest possible gas limit that allows the transaction to run
 // successfully at block `blockNrOrHash`, or the latest block if `blockNrOrHash` is unspecified. It
 // returns error if the transaction would revert or if there are unexpected failures. The returned
@@ -1208,6 +1247,14 @@ func (s *BlockChainAPI) EstimateGas(ctx context.Context, args TransactionArgs, b
 		bNrOrHash = *blockNrOrHash
 	}
 	return DoEstimateGas(ctx, s.b, args, bNrOrHash, overrides, s.b.RPCGasCap())
+}
+
+func (s *BlockChainAPI) EstimateGasBundle(ctx context.Context, args EstimateGasBundleArgs, blockNrOrHash *rpc.BlockNumberOrHash, overrides *StateOverride) ([]hexutil.Uint64, error) {
+	bNrOrHash := rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber)
+	if blockNrOrHash != nil {
+		bNrOrHash = *blockNrOrHash
+	}
+	return DoEstimateGasBundle(ctx, s.b, args, bNrOrHash, overrides, s.b.RPCGasCap())
 }
 
 // RPCMarshalHeader converts the given header to the RPC output .

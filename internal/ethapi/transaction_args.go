@@ -76,6 +76,10 @@ type TransactionArgs struct {
 	blobSidecarAllowed bool
 }
 
+type EstimateGasBundleArgs struct {
+	Transactions []TransactionArgs `json:"transactions"`
+}
+
 // from retrieves the transaction sender address.
 func (args *TransactionArgs) from() common.Address {
 	if args.From == nil {
