@@ -1187,7 +1187,7 @@ func DoEstimateGas(ctx context.Context, b Backend, args TransactionArgs, blockNr
 	}
 	call := args.ToMessage(header.BaseFee)
 	// Run the gas estimation andwrap any revertals into a custom return
-	estimate, revert, err := gasestimator.Estimate(ctx, call, opts, gasCap)
+	estimate, revert, _, err := gasestimator.Estimate(ctx, call, opts, gasCap)
 	if err != nil {
 		if len(revert) > 0 {
 			return 0, newRevertError(revert)
@@ -1208,12 +1208,11 @@ func DoEstimateGasBundle(ctx context.Context, b Backend, bundle EstimateGasBundl
 	}
 	// Construct the gas estimator option from the user input
 	opts := &gasestimator.Options{
-		Config:           b.ChainConfig(),
-		Chain:            NewChainContext(ctx, b),
-		Header:           header,
-		State:            stateDB,
-		IsNotCopyStateDB: true,
-		ErrorRatio:       estimateGasErrorRatio,
+		Config:     b.ChainConfig(),
+		Chain:      NewChainContext(ctx, b),
+		Header:     header,
+		State:      stateDB,
+		ErrorRatio: estimateGasErrorRatio,
 	}
 
 	estimateGas := make([]hexutil.Uint64, 0, len(bundle.Transactions))
@@ -1223,7 +1222,7 @@ func DoEstimateGasBundle(ctx context.Context, b Backend, bundle EstimateGasBundl
 		if err != nil {
 			return nil, err
 		}
-		estimate, revert, err := gasestimator.Estimate(ctx, call, opts, gasCap)
+		estimate, revert, stateDb, err := gasestimator.Estimate(ctx, call, opts, gasCap)
 		if err != nil {
 			if len(revert) > 0 {
 				return nil, newRevertError(revert)
@@ -1231,6 +1230,9 @@ func DoEstimateGasBundle(ctx context.Context, b Backend, bundle EstimateGasBundl
 			return nil, err
 		}
 		estimateGas = append(estimateGas, hexutil.Uint64(estimate))
+		if stateDb != nil {
+			opts.State = stateDb
+		}
 	}
 	return estimateGas, nil
 
