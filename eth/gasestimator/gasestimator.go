@@ -38,24 +38,22 @@ import (
 // these together, it would be excessively hard to test. Splitting the parts out
 // allows testing without needing a proper live chain.
 type Options struct {
-	Config *params.ChainConfig // Chain configuration for hard fork selection
-	Chain  core.ChainContext   // Chain context to access past block hashes
-	Header *types.Header       // Header defining the block context to execute in
-	State  *state.StateDB      // Pre-state on top of which to estimate the gas
-	// This flag whether determines we should make the copy of the opts.State or not.
-	// In the case of bundling transactions, we don't need to make a new copy of opts.State
-	IsNotCopyStateDB bool
-	ErrorRatio       float64 // Allowed overestimation ratio for faster estimation termination
+	Config     *params.ChainConfig // Chain configuration for hard fork selection
+	Chain      core.ChainContext   // Chain context to access past block hashes
+	Header     *types.Header       // Header defining the block context to execute in
+	State      *state.StateDB      // Pre-state on top of which to estimate the gas
+	ErrorRatio float64             // Allowed overestimation ratio for faster estimation termination
 }
 
 // Estimate returns the lowest possible gas limit that allows the transaction to
 // run successfully with the provided context options. It returns an error if the
 // transaction would always revert, or if there are unexpected failures.
-func Estimate(ctx context.Context, call *core.Message, opts *Options, gasCap uint64) (uint64, []byte, error) {
+func Estimate(ctx context.Context, call *core.Message, opts *Options, gasCap uint64) (uint64, []byte, *state.StateDB, error) {
 	// Binary search the gas limit, as it may need to be higher than the amount used
 	var (
-		lo uint64 // lowest-known gas limit where tx execution fails
-		hi uint64 // lowest-known gas limit where tx execution succeeds
+		lo      uint64 // lowest-known gas limit where tx execution fails
+		hi      uint64 // lowest-known gas limit where tx execution succeeds
+		stateDb *state.StateDB
 	)
 	// Determine the highest gas limit can be used during the estimation.
 	hi = opts.Header.GasLimit
@@ -78,7 +76,7 @@ func Estimate(ctx context.Context, call *core.Message, opts *Options, gasCap uin
 		available := balance
 		if call.Value != nil {
 			if call.Value.Cmp(available) >= 0 {
-				return 0, nil, core.ErrInsufficientFundsForTransfer
+				return 0, nil, stateDb, core.ErrInsufficientFundsForTransfer
 			}
 			available.Sub(available, call.Value)
 		}
@@ -106,23 +104,29 @@ func Estimate(ctx context.Context, call *core.Message, opts *Options, gasCap uin
 	// unused access list items). Ever so slightly wasteful, but safer overall.
 	if len(call.Data) == 0 {
 		if call.To != nil && opts.State.GetCodeSize(*call.To) == 0 {
-			failed, _, err := execute(ctx, call, opts, params.TxGas)
+			failed, result, err := execute(ctx, call, opts, params.TxGas)
+			if result != nil {
+				stateDb = result.StateDB
+			}
 			if !failed && err == nil {
-				return params.TxGas, nil, nil
+				return params.TxGas, nil, stateDb, nil
 			}
 		}
 	}
 	// We first execute the transaction at the highest allowable gas limit, since if this fails we
 	// can return error immediately.
 	failed, result, err := execute(ctx, call, opts, hi)
+	if result != nil {
+		stateDb = result.StateDB
+	}
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, stateDb, err
 	}
 	if failed {
 		if result != nil && !errors.Is(result.Err, vm.ErrOutOfGas) {
-			return 0, result.Revert(), result.Err
+			return 0, result.Revert(), stateDb, result.Err
 		}
-		return 0, nil, fmt.Errorf("gas required exceeds allowance (%d)", hi)
+		return 0, nil, stateDb, fmt.Errorf("gas required exceeds allowance (%d)", hi)
 	}
 	// For almost any transaction, the gas consumed by the unconstrained execution
 	// above lower-bounds the gas limit required for it to succeed. One exception
@@ -136,18 +140,22 @@ func Estimate(ctx context.Context, call *core.Message, opts *Options, gasCap uin
 	// check that gas amount and use as a limit for the binary search.
 	optimisticGasLimit := (result.UsedGas + result.RefundedGas + params.CallStipend) * 64 / 63
 	if optimisticGasLimit < hi {
-		failed, _, err = execute(ctx, call, opts, optimisticGasLimit)
+		failed, result, err = execute(ctx, call, opts, optimisticGasLimit)
+		if result != nil {
+			stateDb = result.StateDB
+		}
 		if err != nil {
 			// This should not happen under normal conditions since if we make it this far the
 			// transaction had run without error at least once before.
 			log.Error("Execution error in estimate gas", "err", err)
-			return 0, nil, err
+			return 0, nil, stateDb, err
 		}
 		if failed {
 			lo = optimisticGasLimit
 		} else {
 			hi = optimisticGasLimit
 		}
+
 	}
 	// Binary search for the smallest gas limit that allows the tx to execute successfully.
 	for lo+1 < hi {
@@ -167,12 +175,15 @@ func Estimate(ctx context.Context, call *core.Message, opts *Options, gasCap uin
 			// range here is skewed to favor the low side.
 			mid = lo * 2
 		}
-		failed, _, err = execute(ctx, call, opts, mid)
+		failed, result, err = execute(ctx, call, opts, mid)
+		if result != nil {
+			stateDb = result.StateDB
+		}
 		if err != nil {
 			// This should not happen under normal conditions since if we make it this far the
 			// transaction had run without error at least once before.
 			log.Error("Execution error in estimate gas", "err", err)
-			return 0, nil, err
+			return 0, nil, stateDb, err
 		}
 		if failed {
 			lo = mid
@@ -180,7 +191,7 @@ func Estimate(ctx context.Context, call *core.Message, opts *Options, gasCap uin
 			hi = mid
 		}
 	}
-	return hi, nil, nil
+	return hi, nil, stateDb, nil
 }
 
 // execute is a helper that executes the transaction under a given gas limit and
@@ -208,19 +219,13 @@ func execute(ctx context.Context, call *core.Message, opts *Options, gasLimit ui
 // call invocation.
 func run(ctx context.Context, call *core.Message, opts *Options) (*core.ExecutionResult, error) {
 	// Assemble the call and the call context
-	var dirtyState *state.StateDB
-	if opts.IsNotCopyStateDB {
-		dirtyState = opts.State
-	} else {
-		dirtyState = opts.State.Copy()
-	}
 	var (
 		msgContext = core.NewEVMTxContext(call)
 		evmContext = core.NewEVMBlockContext(opts.Header, opts.Chain, nil)
 
-		evm = vm.NewEVM(evmContext, msgContext, dirtyState, opts.Config, vm.Config{NoBaseFee: true})
+		dirtyState = opts.State.Copy()
+		evm        = vm.NewEVM(evmContext, msgContext, dirtyState, opts.Config, vm.Config{NoBaseFee: true})
 	)
-
 	// Monitor the outer context and interrupt the EVM upon cancellation. To avoid
 	// a dangling goroutine until the outer estimation finishes, create an internal
 	// context for the lifetime of this method call.
@@ -239,5 +244,7 @@ func run(ctx context.Context, call *core.Message, opts *Options) (*core.Executio
 	if err != nil {
 		return result, fmt.Errorf("failed with %d gas: %w", call.GasLimit, err)
 	}
+
+	result.StateDB = dirtyState
 	return result, nil
 }
