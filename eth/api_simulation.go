@@ -34,7 +34,9 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 )
 
-const estimateGasErrorRatio = 0.015
+const (
+	defaultTraceTimeout = 5 * time.Second
+)
 
 var (
 	enableDevnet = os.Getenv("ENABLE_DEVNET")
@@ -150,7 +152,7 @@ func NewSimulationAPI(eth Backend) *SimulationAPIBackend {
 	return simulationAPIBackend
 }
 
-func (b *SimulationAPIBackend) TraceInternalTransaction(_ context.Context, args TraceInternalTransactionArgs) (*types.SimulationTxResponse, error) {
+func (b *SimulationAPIBackend) TraceInternalTransaction(ctx context.Context, args TraceInternalTransactionArgs) (*types.SimulationTxResponse, error) {
 	if len(args.Tx) == 0 {
 		return nil, errors.New("missing transaction")
 	}
@@ -172,7 +174,7 @@ func (b *SimulationAPIBackend) TraceInternalTransaction(_ context.Context, args 
 		stateDb      = b.stateDb
 	)
 
-	simulationResponse, err := b.simulate(tx, stateDb.Copy(), currentBlock)
+	simulationResponse, err := b.simulate(ctx, tx, stateDb.Copy(), currentBlock)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +237,7 @@ func (b *SimulationAPIBackend) setBlock(currentBlock *types.Block) error {
 // simulate the single transaction into *types.SimulationTxResponse
 // use stateDb as a param, stateDb isn't safe for concurrently
 // need to make the copy version of stateDb and pass as the param
-func (b *SimulationAPIBackend) simulate(tx *types.Transaction, stateDb *state.StateDB, currentBlock *types.Block) (*types.SimulationTxResponse, error) {
+func (b *SimulationAPIBackend) simulate(ctx context.Context, tx *types.Transaction, stateDb *state.StateDB, currentBlock *types.Block) (*types.SimulationTxResponse, error) {
 	if tx.To() == nil {
 		return nil, nil
 	}
@@ -275,6 +277,16 @@ func (b *SimulationAPIBackend) simulate(tx *types.Transaction, stateDb *state.St
 		Tracer: internalTransactionTracer,
 	})
 
+	deadlineCtx, cancel := context.WithTimeout(ctx, defaultTraceTimeout)
+	go func() {
+		<-deadlineCtx.Done()
+		if errors.Is(deadlineCtx.Err(), context.DeadlineExceeded) {
+			log.Warn("execution timeout")
+			// Stop evm execution. Note cancellation is not necessarily immediate.
+			vmEVM.Cancel()
+		}
+	}()
+	defer cancel()
 	executionResult, err := core.ApplyMessage(vmEVM, msg, new(core.GasPool).AddGas(math.MaxUint64))
 	if err != nil {
 		if errors.Is(err, core.ErrNonceTooLow) || errors.Is(err, core.ErrNonceMax) {
