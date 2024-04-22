@@ -1218,10 +1218,7 @@ func DoEstimateGasBundle(ctx context.Context, b Backend, bundle EstimateGasBundl
 	estimateGas := make([]hexutil.Uint64, 0, len(bundle.Transactions))
 	for _, args := range bundle.Transactions {
 		// Run the gas estimation andwrap any revertals into a custom return
-		call, err := args.ToMessage(gasCap, header.BaseFee)
-		if err != nil {
-			return nil, err
-		}
+		call := args.ToMessage(header.BaseFee)
 		estimate, revert, stateDb, err := gasestimator.Estimate(ctx, call, opts, gasCap)
 		if err != nil {
 			if len(revert) > 0 {
