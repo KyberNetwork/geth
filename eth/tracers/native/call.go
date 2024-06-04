@@ -110,17 +110,19 @@ type callFrameMarshaling struct {
 }
 
 type callTracer struct {
-	callstack []callFrame
-	config    callTracerConfig
-	gasLimit  uint64
-	depth     int
-	interrupt atomic.Bool // Atomic flag to signal execution interruption
-	reason    error       // Textual reason for the interruption
+	callstack   []callFrame
+	config      callTracerConfig
+	gasLimit    uint64
+	depth       int
+	interrupt   atomic.Bool // Atomic flag to signal execution interruption
+	reason      error       // Textual reason for the interruption
+	whitelisted atomic.Bool // Atomic flag to mark tx is whitelisted for traceCall
 }
 
 type callTracerConfig struct {
-	OnlyTopCall bool `json:"onlyTopCall"` // If true, call tracer won't collect any subcalls
-	WithLog     bool `json:"withLog"`     // If true, call tracer will collect event logs
+	OnlyTopCall bool          `json:"onlyTopCall"` // If true, call tracer won't collect any subcalls
+	WithLog     bool          `json:"withLog"`     // If true, call tracer will collect event logs
+	Topic0s     []common.Hash `json:"topic0s"`     // list of whitelisted topic0 in logs
 }
 
 // newCallTracer returns a native go tracer which tracks
@@ -218,6 +220,7 @@ func (t *callTracer) captureEnd(output []byte, gasUsed uint64, err error, revert
 
 func (t *callTracer) OnTxStart(env *tracing.VMContext, tx *types.Transaction, from common.Address) {
 	t.gasLimit = tx.Gas()
+	t.whitelisted.Store(false)
 }
 
 func (t *callTracer) OnTxEnd(receipt *types.Receipt, err error) {
@@ -232,6 +235,23 @@ func (t *callTracer) OnTxEnd(receipt *types.Receipt, err error) {
 	}
 }
 
+func (t *callTracer) isWhitelisted(topics []common.Hash) bool {
+	if len(topics) == 0 {
+		return false
+	}
+	if len(t.config.Topic0s) == 0 {
+		return true
+	}
+	topic0 := topics[0]
+	for _, t := range t.config.Topic0s {
+		if t == topic0 {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (t *callTracer) OnLog(log *types.Log) {
 	// Only logs need to be captured via opcode processing
 	if !t.config.WithLog {
@@ -244,6 +264,10 @@ func (t *callTracer) OnLog(log *types.Log) {
 	// Skip if tracing was interrupted
 	if t.interrupt.Load() {
 		return
+	}
+
+	if t.isWhitelisted(log.Topics) {
+		t.whitelisted.Store(true)
 	}
 	l := callLog{
 		Address:  log.Address,
@@ -265,7 +289,10 @@ func (t *callTracer) GetResult() (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return res, t.reason
+	if t.whitelisted.Load() {
+		return res, t.reason
+	}
+	return nil, errors.New("transaction is filtered out")
 }
 
 // Stop terminates execution of the tracer at the first opportune moment.
