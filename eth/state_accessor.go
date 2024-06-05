@@ -57,6 +57,8 @@ func (eth *Ethereum) hashState(ctx context.Context, block *types.Block, reexec u
 			return statedb, func() {
 				eth.blockchain.TrieDB().Dereference(block.Root())
 			}, nil
+		} else {
+			log.Info("Can't find block's state in the cache database", "block", block.NumberU64())
 		}
 	}
 	// The state is both for reading and writing, or it's unavailable in disk,
