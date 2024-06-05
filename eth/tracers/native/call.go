@@ -117,6 +117,7 @@ type callTracer struct {
 	interrupt   atomic.Bool // Atomic flag to signal execution interruption
 	reason      error       // Textual reason for the interruption
 	whitelisted atomic.Bool // Atomic flag to mark tx is whitelisted for traceCall
+	hasLog      atomic.Bool // Atomic flag to mark tx contains log
 }
 
 type callTracerConfig struct {
@@ -221,6 +222,7 @@ func (t *callTracer) captureEnd(output []byte, gasUsed uint64, err error, revert
 func (t *callTracer) OnTxStart(env *tracing.VMContext, tx *types.Transaction, from common.Address) {
 	t.gasLimit = tx.Gas()
 	t.whitelisted.Store(false)
+	t.hasLog.Store(false)
 }
 
 func (t *callTracer) OnTxEnd(receipt *types.Receipt, err error) {
@@ -253,6 +255,7 @@ func (t *callTracer) isWhitelisted(topics []common.Hash) bool {
 }
 
 func (t *callTracer) OnLog(log *types.Log) {
+	t.hasLog.Store(true)
 	// Only logs need to be captured via opcode processing
 	if !t.config.WithLog {
 		return
@@ -289,7 +292,7 @@ func (t *callTracer) GetResult() (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	if t.whitelisted.Load() {
+	if !t.hasLog.Load() || t.whitelisted.Load() {
 		return res, t.reason
 	}
 	return nil, errors.New("transaction is filtered out")
