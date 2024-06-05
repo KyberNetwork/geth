@@ -237,7 +237,7 @@ func (t *callTracer) OnTxEnd(receipt *types.Receipt, err error) {
 
 func (t *callTracer) isWhitelisted(topics []common.Hash) bool {
 	if len(topics) == 0 {
-		return false
+		return true
 	}
 	if len(t.config.Topic0s) == 0 {
 		return true
