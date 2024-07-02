@@ -287,7 +287,7 @@ func (t *callTracer) GetResult() (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !t.hasLog.Load() || t.whitelisted.Load() {
+	if t.reason != nil || !t.hasLog.Load() || t.whitelisted.Load() {
 		return res, t.reason
 	}
 	return nil, errors.New("transaction is filtered out")
