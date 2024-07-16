@@ -956,19 +956,19 @@ Please note that --` + MetricsHTTPFlag.Name + ` must be set to start the server.
 	}
 
 	PyroscopeEnabled = &cli.BoolFlag{
-		Name:    "pyroscope-enabled",
+		Name:    "pyroscope.enabled",
 		EnvVars: []string{"PYROSCOPE_ENABLED"},
 		Value:   false,
 		Usage:   "Enable pyroscope pprof",
 	}
 	PyroscopeHost = &cli.StringFlag{
-		Name:    "pyroscope-host",
+		Name:    "pyroscope.host",
 		EnvVars: []string{"PYROSCOPE_HOST"},
 		Value:   "",
 		Usage:   "Pyroscope host address",
 	}
 	PyroscopeAppName = &cli.StringFlag{
-		Name:    "pyroscope-app-name",
+		Name:    "pyroscope.appname",
 		EnvVars: []string{"PYROSCOPE_APP_NAME"},
 		Value:   "geth-trading",
 		Usage:   "Pyroscope app name",
