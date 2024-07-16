@@ -954,6 +954,25 @@ Please note that --` + MetricsHTTPFlag.Name + ` must be set to start the server.
 		Value:    metrics.DefaultConfig.InfluxDBOrganization,
 		Category: flags.MetricsCategory,
 	}
+
+	PyroscopeEnabled = &cli.BoolFlag{
+		Name:    "pyroscope-enabled",
+		EnvVars: []string{"PYROSCOPE_ENABLED"},
+		Value:   false,
+		Usage:   "Enable pyroscope pprof",
+	}
+	PyroscopeHost = &cli.StringFlag{
+		Name:    "pyroscope-host",
+		EnvVars: []string{"PYROSCOPE_HOST"},
+		Value:   "",
+		Usage:   "Pyroscope host address",
+	}
+	PyroscopeAppName = &cli.StringFlag{
+		Name:    "pyroscope-app-name",
+		EnvVars: []string{"PYROSCOPE_APP_NAME"},
+		Value:   "geth-trading",
+		Usage:   "Pyroscope app name",
+	}
 )
 
 var (
