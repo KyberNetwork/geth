@@ -20,6 +20,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,6 +39,8 @@ import (
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/node"
 	"go.uber.org/automaxprocs/maxprocs"
+
+	"github.com/grafana/pyroscope-go"
 
 	// Force-load the tracer engines to trigger registration
 	_ "github.com/ethereum/go-ethereum/eth/tracers/js"
@@ -206,6 +209,12 @@ var (
 		utils.MetricsInfluxDBBucketFlag,
 		utils.MetricsInfluxDBOrganizationFlag,
 	}
+
+	PyroscopeFlags = []cli.Flag{
+		utils.PyroscopeEnabled,
+		utils.PyroscopeHost,
+		utils.PyroscopeAppName,
+	}
 )
 
 var app = flags.NewApp("the go-ethereum command line interface")
@@ -257,6 +266,7 @@ func init() {
 		consoleFlags,
 		debug.Flags,
 		metricsFlags,
+		PyroscopeFlags,
 	)
 	flags.AutoEnvVars(app.Flags, "GETH")
 
@@ -336,6 +346,54 @@ func prepare(ctx *cli.Context) {
 
 	// Start system runtime metrics collection
 	go metrics.CollectProcessMetrics(3 * time.Second)
+
+	// Start Pyroscope if enabled
+	pyroscopeEnabled := ctx.Bool(utils.PyroscopeEnabled.Name)
+	pyroscopeHostname := ctx.String(utils.PyroscopeHost.Name)
+	log.Info("Pyroscope cfg: enabled %t serverAddress %s\n", pyroscopeEnabled, pyroscopeHostname)
+
+	// nolint: nestif
+	if pyroscopeEnabled {
+		pyroscopeServer := pyroscopeHostname
+		if pyroscopeServer == "" {
+			utils.Fatalf("pyroscope server is not set\n")
+		}
+
+		profileTypes := []pyroscope.ProfileType{
+			// these profile types are enabled by default:
+			pyroscope.ProfileCPU,
+			pyroscope.ProfileAllocObjects,
+			pyroscope.ProfileAllocSpace,
+			pyroscope.ProfileInuseObjects,
+			pyroscope.ProfileInuseSpace,
+
+			// these profile types are optional:
+			pyroscope.ProfileGoroutines,
+			pyroscope.ProfileMutexCount,
+			pyroscope.ProfileMutexDuration,
+			pyroscope.ProfileBlockCount,
+			pyroscope.ProfileBlockDuration,
+		}
+		runtime.SetBlockProfileRate(1)
+		runtime.SetMutexProfileFraction(1)
+
+		_, err := pyroscope.Start(pyroscope.Config{
+			ApplicationName: ctx.String(utils.PyroscopeAppName.Name),
+
+			// replace this with the address of pyroscope server
+			ServerAddress: pyroscopeServer,
+
+			// you can disable logging by setting this to nil
+			Logger: pyroscope.StandardLogger,
+
+			// you can provide static tags via a map
+
+			ProfileTypes: profileTypes,
+		})
+		if err != nil {
+			utils.Fatalf("failed to start pyroscope: %v", err)
+		}
+	}
 }
 
 // geth is the main entry point into the system if no special subcommand is run.
