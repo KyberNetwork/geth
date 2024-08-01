@@ -886,6 +886,11 @@ func (api *API) TraceTransaction(ctx context.Context, hash common.Hash, config *
 	return api.traceTx(ctx, tx, msg, txctx, vmctx, statedb, config)
 }
 
+func printBeautifulJson(data interface{}) {
+	pretty, _ := json.MarshalIndent(data, "", "  ")
+	fmt.Println(string(pretty))
+}
+
 // TraceCall lets you trace a given eth_call. It collects the structured logs
 // created during the execution of EVM if the given transaction was added on
 // top of the provided block and returns them as a JSON object.
@@ -895,6 +900,7 @@ func (api *API) TraceTransaction(ctx context.Context, hash common.Hash, config *
 // within the specified block.
 func (api *API) TraceCall(ctx context.Context, args ethapi.TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, config *TraceCallConfig) (interface{}, error) {
 	// Try to retrieve the specified block
+	log.Info("Start get log Trace call", "args", args, "blockNrOrHash", blockNrOrHash, "config", config)
 	var (
 		err     error
 		block   *types.Block
