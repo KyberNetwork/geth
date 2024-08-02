@@ -900,7 +900,8 @@ func printBeautifulJson(data interface{}) {
 // within the specified block.
 func (api *API) TraceCall(ctx context.Context, args ethapi.TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, config *TraceCallConfig) (interface{}, error) {
 	// Try to retrieve the specified block
-	log.Info("Start get log Trace call", "args", args, "blockNrOrHash", blockNrOrHash, "config", config)
+	//log.Info("Start get log Trace call")
+
 	var (
 		err     error
 		block   *types.Block
