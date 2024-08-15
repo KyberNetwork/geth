@@ -17,6 +17,7 @@
 package core
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/big"
@@ -170,6 +171,11 @@ func TransactionToMessage(tx *types.Transaction, s types.Signer, baseFee *big.In
 	}
 	var err error
 	msg.From, err = types.Sender(s, tx)
+	jsonData, _ := json.MarshalIndent(msg, "", "    ")
+	fmt.Println(string(jsonData))
+
+	jsonData, _ = json.MarshalIndent(tx, "", "    ")
+	fmt.Println(string(jsonData))
 	return msg, err
 }
 

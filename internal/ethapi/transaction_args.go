@@ -451,7 +451,7 @@ func (args *TransactionArgs) ToMessage(baseFee *big.Int) *core.Message {
 	if args.AccessList != nil {
 		accessList = *args.AccessList
 	}
-	return &core.Message{
+	messge := &core.Message{
 		From:              args.from(),
 		To:                args.To,
 		Value:             (*big.Int)(args.Value),
@@ -465,6 +465,7 @@ func (args *TransactionArgs) ToMessage(baseFee *big.Int) *core.Message {
 		BlobHashes:        args.BlobHashes,
 		SkipAccountChecks: true,
 	}
+	return messge
 }
 
 // ToTransaction converts the arguments to a transaction.

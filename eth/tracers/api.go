@@ -165,6 +165,7 @@ type TraceCallConfig struct {
 	StateOverrides *ethapi.StateOverride
 	BlockOverrides *ethapi.BlockOverrides
 	TxIndex        *hexutil.Uint
+	Debug          bool
 }
 
 // StdTraceConfig holds extra parameters to standard-json trace functions.
@@ -902,6 +903,13 @@ func (api *API) TraceCall(ctx context.Context, args ethapi.TransactionArgs, bloc
 	// Try to retrieve the specified block
 	//log.Info("Start get log Trace call")
 
+	if config.Debug {
+		jsonData, _ := json.MarshalIndent(config, "", "    ")
+		fmt.Println("config", string(jsonData))
+
+		jsonData, _ = json.MarshalIndent(args, "", "    ")
+		fmt.Println("args", string(jsonData))
+	}
 	var (
 		err     error
 		block   *types.Block
@@ -961,6 +969,10 @@ func (api *API) TraceCall(ctx context.Context, args ethapi.TransactionArgs, bloc
 	)
 	if config != nil {
 		traceConfig = &config.TraceConfig
+	}
+	if config.Debug {
+		jsonData, _ := json.MarshalIndent(msg, "", "    ")
+		fmt.Println("msg", string(jsonData))
 	}
 	return api.traceTx(ctx, tx, msg, new(Context), vmctx, statedb, traceConfig)
 }
