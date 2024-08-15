@@ -878,6 +878,14 @@ func (api *API) TraceTransaction(ctx context.Context, hash common.Hash, config *
 		return nil, err
 	}
 
+	if config.Debug {
+		jsonData, _ := json.MarshalIndent(msg, "", "    ")
+		fmt.Println(string(jsonData))
+
+		jsonData, _ = json.MarshalIndent(tx, "", "    ")
+		fmt.Println(string(jsonData))
+	}
+
 	txctx := &Context{
 		BlockHash:   blockHash,
 		BlockNumber: block.Number(),
